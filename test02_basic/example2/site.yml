@@ -1,0 +1,24 @@
+# test02_basic/example/site.yml
+
+---
+- name: Nginx setup and service start
+  hosts: all
+  become: true
+
+  tasks:
+    - name: nginx setup
+      dnf:
+        name: nginx
+        state: present
+    
+    - name: nginx service start and action
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+    
+    - name: test index page
+      copy:
+        content: "<h1>Ansible deployed by terraform {{ inventory_hostname }}</h1>"
+        dest: /usr/share/nginx/html/index.html
+
