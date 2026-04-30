@@ -1,0 +1,5 @@
+# terraform_example/test02_basic/locals2/terraform.tfvars.example
+
+env = "dev environment"
+project_name = "project name"
+db_password = "secretpassword"
