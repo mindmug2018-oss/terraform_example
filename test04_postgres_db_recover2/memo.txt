@@ -1,0 +1,9 @@
+# terraform_example/test04_postgres_db_recover2/memo.txt
+
+s3_bucket_name = "db-backup-storage-fed0df5b"
+
+aws s3 cp ./full_db_backup.sql s3://db-backup-storage-fed0df5b/full_db_backup.sql
+
+aws s3 ls s3://db-backup-storage-fed0df5b/
+
+aws s3 rm s3://db-backup-storage-fed0df5b/ --recursive

@@ -1,0 +1,5 @@
+"all":
+  "hosts":
+    "13.209.9.42":
+      "ansible_ssh_private_key_file": "./lecture-key.pem"
+      "ansible_user": "ec2-user"

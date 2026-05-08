@@ -1,0 +1,123 @@
+# terraform_example/test04_postgres_db_recover/site.yml
+
+---
+- name: "PostgreSQL 16/17 Setup (Ubuntu 25 & Rocky 10)"
+  hosts: all
+  become: yes
+
+  vars:
+    # OS별 경로 및 패키지 설정
+    pg_version: "{{ '17' if ansible_distribution == 'Ubuntu' else '16' }}"
+    pg_packages: "{{ ['postgresql-17', 'postgresql-contrib', 'python3-psycopg2'] if ansible_distribution == 'Ubuntu' else ['postgresql16-server', 'python3-psycopg2'] }}"
+    pg_config_path: "{{ '/etc/postgresql/17/main' if ansible_distribution == 'Ubuntu' else '/var/lib/pgsql/data' }}"
+    pg_service: "postgresql"
+
+  tasks:
+    - name: 1. Install PostgreSQL Packages
+      package:
+        name: "{{ pg_packages }}"
+        state: present
+
+    - name: 2. Initialize Database (Rocky Only)
+      command: postgresql-setup --initdb
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
+      when: ansible_os_family == "RedHat"
+
+    - name: 3. Ensure PostgreSQL is started
+      service:
+        name: "{{ pg_service }}"
+        state: started
+        enabled: yes
+
+    - name: 4. Configure listen_addresses
+      lineinfile:
+        path: "{{ pg_config_path }}/postgresql.conf"
+        regexp: "^#?listen_addresses ="
+        line: "listen_addresses = '*'"
+      notify: restart postgres
+
+    - name: 5. Ensure PostgreSQL is listening on 127.0.0.1
+      lineinfile:
+        path: "{{ pg_config_path }}/postgresql.conf"
+        regexp: "^#?listen_addresses ="
+        line: "listen_addresses = '*'"
+      notify: restart postgres
+
+    - name: Allow management machine to connect to scott_db
+      ansible.builtin.blockinfile:
+        path: "{{ pg_config_path }}/pg_hba.conf"
+        block: |
+          host    scott_db    scott    192.168.61.128/32    scram-sha-256
+        insertafter: EOF
+      notify: restart postgres
+
+    - name: 5.2. Allow management machine (Public IP) at the top of pg_hba.conf
+      ansible.builtin.lineinfile:
+        path: "{{ pg_config_path }}/pg_hba.conf"
+        # Insert at the very top to ensure it takes precedence
+        insertbefore: BOF
+        line: "host    scott_db    scott    58.78.143.102/32    scram-sha-256"
+      when: ansible_host == '3.34.47.251'
+      notify: restart postgres
+    - name: Force restart to apply access rules
+      ansible.builtin.meta: flush_handlers
+    
+    - name: 5.3. Change local localhost auth from ident to scram-sha-256
+      ansible.builtin.replace:
+        path: "{{ pg_config_path }}/pg_hba.conf"
+        regexp: '^(host\s+all\s+all\s+127\.0\.0\.1/32\s+)ident'
+        replace: '\1scram-sha-256'
+      notify: restart postgres
+
+    # 핸들러를 기다리지 않고 바로 재시작하여 설정을 적용합니다.
+    - name: Flush handlers to restart postgres
+      meta: flush_handlers
+
+    - name: 6. Create Database User (Scott)
+      community.postgresql.postgresql_user:
+        name: "scott"
+        password: "tiger"
+        role_attr_flags: "LOGIN"
+      become: yes
+      become_user: postgres
+
+    - name: 7. Create Database (Scott_DB)
+      community.postgresql.postgresql_db:
+        name: "scott_db"
+        owner: "scott"
+      become: yes
+      become_user: postgres
+
+  handlers:
+    - name: restart postgres
+      service:
+        name: "{{ pg_service }}"
+        state: restarted
+
+  post_tasks:
+    - name: "1. mgmt brought over backup file target servers"
+      ansible.builtin.shell:
+        cmd: "aws s3 cp s3://db-backup-storage-fed0df5b/full_db_backup.sql /tmp/full_db_backup.sql"
+      register: s3_download_result
+      become: no
+    
+    - name: "2. Downloaded file change owner"
+      ansible.builtin.file:
+        path: "/tmp/full_db_backup.sql"
+        owner: postgres
+        group: postgres
+        mode: '0644'
+      become: yes
+
+    - name: "3. Back up file used entire data"
+      ansible.builtin.shell:
+        cmd: "psql -U postgres -f /tmp/full_db_backup.sql postgres"
+      become_user: postgres
+      ignore_errors: yes
+      register: restore_result
+
+    - name: "4. Back up result confirmed"
+      debug:
+        msg: "Data backup has been completed"
+      when: restore_result is succeeded
