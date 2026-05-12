@@ -9,6 +9,14 @@ terraform {
         version = "~> 6.0"
     }
   }
+
+backend "s3" {
+    bucket = "tfstate-bucket-01ad64ae"
+    key = "lecture/terraform.tfstate"
+    region = "ap-northeast-2"
+    dynamodb_table = "terraform_lock"
+    encrypt = true
+    }
 }
 
 
