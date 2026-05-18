@@ -12,3 +12,6 @@
 
 # Crash log files
 crash.log
+
+#terraform
+terraform.tfvars
