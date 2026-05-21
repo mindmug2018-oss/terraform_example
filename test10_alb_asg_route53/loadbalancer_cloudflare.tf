@@ -1,10 +1,16 @@
-# terraform_example/test10_alb route53/loadbalancer.tf
+# ~/terraform_example/test10_alb_route53/loadbalancer.tf
+terraform {
+  required_providers {
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
+    }
+  }
+}
 
-
-# Route 53 도메인 장부 정보 읽어오기
-data "aws_route53_zone" "selected" {
-  name = "${var.domain_name}."
-  private_zone = false
+# Move this outside the terraform block
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
 }
 
 
@@ -66,40 +72,28 @@ resource "aws_lb_listener" "web_listener" {
   }
 }
 
-# =========================================================
-# 도메인 레코드 연결: Route 53에 ALB 주소를 등록합니다.
-# =========================================================
-# www.도메인 연결
-resource "aws_route53_record" "www" {
-  # 어느 호스팅 영역(도메인 관리소)에 기록할지 ID 지정
-  # data.aws_route53_zone.selected 는 route53.tf 에 있음
-  zone_id = data.aws_route53_zone.selected.zone_id
-  # 실제 사용할 도메인 이름 (예: www.cloud-study.in)
-  name    = "www.${var.domain_name}"
-  # 레코드 타입: A 레코드 (IPv4 주소 연결)
-  # 하지만 아래 alias 설정을 쓰면 단순 IP가 아닌 AWS 리소스로 직접 연결됩니다.
-  type    = "A"
-  #  별칭(Alias) 설정: AWS 리소스를 도메인에 직접 매핑
-  alias {
-    # 연결할 대상: 위에서 만든 ALB의 실제 DNS 주소
-    name                   = aws_lb.web_alb.dns_name
-    # ALB가 속한 지역의 고유 ID (Route 53이 내부적으로 경로를 찾을 때 사용)
-    zone_id                = aws_lb.web_alb.zone_id
-    # 대상의 상태 확인: ALB가 죽어있으면 DNS 응답을 하지 않도록 설정 (고가용성)
-    evaluate_target_health = true
-  }
+#=========================================================
+# 도메인 레코드 연결: 클라우드플레어에 ALB 주소를 등록합니다.
+#=========================================================
+
+# 1. Root Record (cshimomoto.com)
+resource "cloudflare_record" "root" {
+  zone_id = var.cloudflare_zone_id
+  name    = "@"                        # "@" represents the root apex domain
+  type    = "CNAME"
+  value   = aws_lb.web_alb.dns_name
+  ttl     = 1                          # 1 means "Automatic" in Cloudflare
+  proxied = true                       # Keeps Cloudflare DDoS and SSL protection active
 }
 
-# 루트(root) 도메인 연결
-resource "aws_route53_record" "root" {
-  zone_id = data.aws_route53_zone.selected.zone_id
-  name    = var.domain_name
-  type    = "A"
-  alias {
-    name                   = aws_lb.web_alb.dns_name
-    zone_id                = aws_lb.web_alb.zone_id
-    evaluate_target_health = true
-  }
+# 2. WWW Record (://cshimomoto.com)
+resource "cloudflare_record" "www" {
+  zone_id = var.cloudflare_zone_id
+  name    = "www"                      # Creates the 'www' prefix subdomain
+  type    = "CNAME"
+  value   = aws_lb.web_alb.dns_name
+  ttl     = 1
+  proxied = true                       # Keeps Cloudflare DDoS and SSL protection active
 }
 
 
@@ -108,7 +102,7 @@ resource "aws_route53_record" "root" {
 resource "aws_security_group" "alb_sg" {
   name        = "lecture-alb-sg"
   description = "Allow HTTP and HTTPS traffic"
-  vpc_id      = aws_vpc.main.id #
+  vpc_id      = aws_vpc.main.id 
 
 
   ingress {
@@ -176,18 +170,6 @@ resource "aws_lb_target_group" "web_tg" {
         timeout             = 5  # 응답을 기다리는 최대 시간(초). 이 시간 넘기면 실패로 간주합니다.
         interval            = 30 # 다음 확인까지 기다리는 주기(초). 너무 짧으면 서버에 부담을 줍니다.
     }    
-}
-
-
-# ALB 로부터 요청을 전달 받은 모든 ec2 를 대상그룹에 등록한다
-resource "aws_lb_target_group_attachment" "web_attach" {
-    # 변수에 정의된 count 숫자 만큼 연결한다
-    count = var.ec2_count
-    # 위에서 정의한 대상 그룹의  arn 을 연결한다
-    target_group_arn = aws_lb_target_group.web_tg.arn
-    port = 80
-    # count.index 를 지정해서 연결
-    target_id = aws_instance.my_ec2[count.index].id
 }
 
 
